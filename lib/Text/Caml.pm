@@ -384,7 +384,7 @@ sub _slurp_template {
         # return cached entry after comparing mtime
         @st = stat $path or _croak("Template '$path' was removed");
         return $CACHE_FILE{$path}->[1]
-            if $st[9] == $CACHE_FILE{$path}->[1]; # compare mtime
+            if $st[9] == $CACHE_FILE{$path}->[0]; # compare mtime
     }
 
     my $path =
