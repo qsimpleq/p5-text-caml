@@ -18,6 +18,9 @@ our $START_OF_SECTION          = quotemeta '#';
 our $START_OF_INVERTED_SECTION = quotemeta '^';
 our $END_OF_SECTION            = quotemeta '/';
 
+# cache template files by abs path
+my  %CACHE_FILE = ();
+
 sub new {
     my $class = shift;
     my (%params) = @_;
@@ -25,6 +28,8 @@ sub new {
     my $self = {};
     bless $self, $class;
 
+    $self->{use_cache} = $params{use_cache} ||= 0;
+    $self->{cache} = {};
     $self->{templates_path}            = $params{templates_path};
     $self->{default_partial_extension} = $params{default_partial_extension};
 
@@ -52,6 +57,12 @@ sub render_file {
 
     $template = $self->_slurp_template($template);
     return $self->_parse($template, $context);
+}
+
+sub use_cache {
+    my $self = shift;
+    $self->{use_cache} = $_[0] if @_;
+    $self->{use_cache};
 }
 
 sub _parse {
@@ -338,13 +349,30 @@ sub _slurp_template {
     my $self = shift;
     my ($template) = @_;
 
+    my @st;
+    if (exists $self->{cache}->{$template} and exists $CACHE_FILE{$self->{cache}->{$template}}) {
+        my $path = $self->{cache}->{$template};
+
+        # return cached entry if exists cached template in %CACHE_FILE
+        if ($self->{use_cache} == 2 and $CACHE_FILE{$path}) {
+            return $CACHE_FILE{$path}->[1];
+        }
+
+        # return cached entry after comparing mtime
+        @st = stat $path or _croak("Template '$path' was removed");
+        return $CACHE_FILE{$path}->[1]
+            if $st[9] == $CACHE_FILE{$path}->[1]; # compare mtime
+    }
+
     my $path =
       defined $self->templates_path
       && !(File::Spec->file_name_is_absolute($template))
-      ? File::Spec->catfile($self->templates_path, $template)
+      ? File::Spec->rel2abs(File::Spec->catfile($self->templates_path, $template))
       : $template;
 
-    _croak("Can't find '$path'") unless defined $path && -f $path;
+    unless (@st) {
+        @st = stat $path or _croak("Can't find '$path'");
+    }
 
     my $content = do {
         local $/;
@@ -355,6 +383,12 @@ sub _slurp_template {
     _croak("Can't open '$template'") unless defined $content;
 
     chomp $content;
+
+    $self->{cache}->{$template} = $path;
+    $CACHE_FILE{$path} = [
+        $st[9], # mtime
+        $content,
+    ] if $self->{use_cache};
 
     return $content;
 }
@@ -574,6 +608,10 @@ filenames.
   {{#articles}}
   {{>article_summary}} # article_summary.caml will be searched
   {{/articles}}
+
+=head2 C<use_cache>
+
+Cache mode (0: no cache (default), 1: cache with update check, 2: cache but do not check updates)
 
 =head1 METHODS
 
